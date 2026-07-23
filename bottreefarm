@@ -9,7 +9,11 @@ import os
 import time
 
 # 🔹 CẤU HÌNH CHUNG
-TOKEN = os.environ.get("BOT_TOKEN", "8616760362:AAF95D8hygBDRM8ry-BBWGQhnhv9QFSKjUQ")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN chưa được set trong biến môi trường")
+
+bot = telebot.TeleBot(BOT_TOKEN)
 CHU_SO_HUU = 7055595466
 LINK_MINIAPP = "https://m.treefarmapp.workers.dev/"
 LINK_ANH = "https://i.ibb.co/7x7DFnZ9/1783599852392.jpg"
