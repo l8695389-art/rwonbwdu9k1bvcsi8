@@ -8,6 +8,8 @@ import json
 import os
 import time
 import threading
+import requests
+from urllib.parse import quote
 from flask import Flask, request, jsonify
 
 # 🔹 CẤU HÌNH CHUNG
@@ -28,6 +30,11 @@ FILE_ADMIN = "/app/data/admin_list.json"
 FILE_NGUOI_DUNG = "/app/data/user_data.json"
 FILE_LOG = "/app/data/log_hoat_dong.txt"
 FILE_IP = "/app/data/ip_dang_dung.json"
+
+# 🔗 LINK4M — dùng để tạo link vượt (rút gọn)
+LINK4M_API_TOKEN = os.environ.get("LINK4M_API_TOKEN")
+if not LINK4M_API_TOKEN:
+    raise RuntimeError("LINK4M_API_TOKEN chưa được set trong biến môi trường")
 
 # ==================================================
 # 🔧 HÀM HỖ TRỢ LƯU/ĐỌC DỮ LIỆU
@@ -272,6 +279,49 @@ def nha_ip_api():
             luu_file_json(FILE_IP, IP_DANG_DUNG)
 
     return jsonify({"thanh_cong": True})
+
+@app.route("/tao-link")
+def tao_link_api():
+    """
+    Miniapp gọi: GET /tao-link?uid=...
+    Backend gọi Link4M thay cho JS (né CORS) rồi trả link về cho miniapp.
+    """
+    uid = request.args.get("uid")
+    if not uid:
+        return jsonify({"thanh_cong": False, "loi": "thieu_uid"}), 400
+
+    target = f"https://t.me/treefarm_bot?start=nhiemvu_{uid}"
+    api_url = (
+        f"https://link4m.co/api-shorten/v2"
+        f"?api={LINK4M_API_TOKEN}&url={quote(target, safe='')}"
+    )
+    try:
+        res = requests.get(api_url, timeout=15)
+        data = res.json()
+        if data.get("status") == "success" and data.get("shortenedUrl"):
+            return jsonify({"thanh_cong": True, "link": data["shortenedUrl"]})
+        return jsonify({"thanh_cong": False, "loi": data.get("message", "loi_khong_ro")})
+    except Exception as e:
+        return jsonify({"thanh_cong": False, "loi": str(e)}), 500
+
+@app.route("/kiem-tra-link")
+def kiem_tra_link_api():
+    """
+    Miniapp gọi: GET /kiem-tra-link?url=...
+    Trả về {"hoan_thanh": true/false} dựa trên số click Link4M ghi nhận.
+    """
+    url = request.args.get("url")
+    if not url:
+        return jsonify({"hoan_thanh": False, "loi": "thieu_url"}), 400
+
+    api_url = f"https://link4m.co/api-stats?api={LINK4M_API_TOKEN}&url={quote(url, safe='')}"
+    try:
+        res = requests.get(api_url, timeout=15)
+        data = res.json()
+        hoan_thanh = data.get("status") == "success" and int(data.get("clicks", 0)) > 0
+        return jsonify({"hoan_thanh": hoan_thanh})
+    except Exception as e:
+        return jsonify({"hoan_thanh": False, "loi": str(e)}), 500
 
 @app.route("/suc-khoe")
 def suc_khoe():
