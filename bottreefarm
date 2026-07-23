@@ -22,10 +22,9 @@ LINK_ANH = "https://i.ibb.co/7x7DFnZ9/1783599852392.jpg"
 NHOM_LOG = "@nhomlogbot"   # hoặc thay bằng chat_id số âm nếu nhóm private
 
 # 📂 FILE LƯU DỮ LIỆU
-FILE_ADMIN    = "admin_list.json"
-FILE_NGUOI_DUNG = "user_data.json"
-FILE_LOG      = "log_hoat_dong.txt"
-
+FILE_ADMIN = "/app/data/admin_list.json"
+FILE_NGUOI_DUNG = "/app/data/user_data.json"
+FILE_LOG = "/app/data/log_hoat_dong.txt"
 # ==================================================
 # 🔧 HÀM HỖ TRỢ LƯU/ĐỌC DỮ LIỆU
 # ==================================================
