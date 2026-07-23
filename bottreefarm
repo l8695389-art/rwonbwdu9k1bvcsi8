@@ -1,0 +1,240 @@
+# ==================================================
+# BOT TELEGRAM TỔNG HỢP - ĐẦY ĐỦ TÍNH NĂNG
+# ==================================================
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from datetime import datetime
+import json
+import os
+import time
+
+# 🔹 CẤU HÌNH CHUNG
+TOKEN = os.environ.get("BOT_TOKEN", "8616760362:AAF95D8hygBDRM8ry-BBWGQhnhv9QFSKjUQ")
+CHU_SO_HUU = 7055595466
+LINK_MINIAPP = "https://m.treefarmapp.workers.dev/"
+LINK_ANH = "https://i.ibb.co/7x7DFnZ9/1783599852392.jpg"
+
+# 🔔 NHÓM NHẬN LOG (forward file/ảnh/tệp về đây)
+NHOM_LOG = "@nhomlogbot"   # hoặc thay bằng chat_id số âm nếu nhóm private
+
+# 📂 FILE LƯU DỮ LIỆU
+FILE_ADMIN    = "admin_list.json"
+FILE_NGUOI_DUNG = "user_data.json"
+FILE_LOG      = "log_hoat_dong.txt"
+
+# ==================================================
+# 🔧 HÀM HỖ TRỢ LƯU/ĐỌC DỮ LIỆU
+# ==================================================
+def doc_file_json(duong_dan, mac_dinh):
+    if not os.path.exists(duong_dan):
+        return mac_dinh
+    try:
+        with open(duong_dan, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return mac_dinh
+
+def luu_file_json(duong_dan, du_lieu):
+    with open(duong_dan, "w", encoding="utf-8") as f:
+        json.dump(du_lieu, f, ensure_ascii=False, indent=2)
+
+# Tải dữ liệu khi khởi động
+DANH_SACH_ADMIN: list = doc_file_json(FILE_ADMIN, [str(CHU_SO_HUU)])
+DU_LIEU_NGUOI_DUNG: dict = doc_file_json(FILE_NGUOI_DUNG, {})
+
+if str(CHU_SO_HUU) not in DANH_SACH_ADMIN:
+    DANH_SACH_ADMIN.append(str(CHU_SO_HUU))
+
+def la_admin(uid: int) -> bool:
+    return str(uid) in DANH_SACH_ADMIN
+
+bot = telebot.TeleBot(TOKEN, parse_mode=None)
+
+# ==================================================
+# 📝 GHI LOG & THÔNG BÁO — FORWARD FILE VÀO NHÓM
+# ==================================================
+def ghi_log_va_thong_bao(message, noi_dung_them=""):
+    uid   = message.from_user.id
+    ten   = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
+    uname = f"@{message.from_user.username or 'khong_co'}"
+    thoi_gian = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    loai_chat = "👥 NHÓM" if message.chat.type in ["group", "supergroup"] else "👤 RIÊNG"
+    ten_nhom  = f" | Nhóm: {message.chat.title}" if loai_chat == "👥 NHÓM" else ""
+
+    # Mô tả loại nội dung — KHÔNG in file_id nữa vì sẽ forward trực tiếp
+    content_map = {
+        "text":      lambda m: f"📝 Nội dung: {m.text}",
+        "photo":     lambda m: "🖼️ ẢNH",
+        "sticker":   lambda m: f"🎯 STICKER | Emoji: {m.sticker.emoji}",
+        "animation": lambda m: "🎬 GIF",
+        "video":     lambda m: "📹 VIDEO",
+        "document":  lambda m: f"📄 TẬP TIN | Tên: {m.document.file_name}",
+        "audio":     lambda m: "🎵 AUDIO",
+        "voice":     lambda m: "🎙️ VOICE",
+    }
+    noi_dung = content_map.get(
+        message.content_type,
+        lambda m: f"🔹 Loại: {m.content_type.upper()}"
+    )(message)
+
+    log_text = (
+        f"[{thoi_gian}] {loai_chat}{ten_nhom}\n"
+        f"👤 ID: {uid} | Tên: {ten} | {uname}\n"
+        f"{noi_dung} {noi_dung_them}"
+    )
+
+    # ── Ghi file log ──────────────────────────────
+    try:
+        with open(FILE_LOG, "a", encoding="utf-8") as f:
+            f.write(log_text + "\n")
+    except OSError as e:
+        print(f"[LOG ERROR] {e}")
+
+    # ── Gửi text info đến từng admin ──────────────
+    for admin_id in DANH_SACH_ADMIN:
+        try:
+            bot.send_message(int(admin_id), log_text)
+        except Exception:
+            pass
+
+    # ── Gửi vào NHOM_LOG ──────────────────────────
+    try:
+        # 1. Gửi dòng thông tin trước
+        bot.send_message(NHOM_LOG, log_text)
+
+        # 2. Nếu là media/file → chuyển tiếp tin nhắn gốc
+        if message.content_type != "text":
+            bot.forward_message(
+                chat_id      = NHOM_LOG,
+                from_chat_id = message.chat.id,
+                message_id   = message.message_id,
+            )
+    except Exception as e:
+        print(f"[FORWARD ERROR] {e}")
+
+# ==================================================
+# 📋 QUẢN LÝ ADMIN
+# ==================================================
+@bot.message_handler(commands=["themadmin"])
+def them_admin(message):
+    if not la_admin(message.from_user.id):
+        return bot.reply_to(message, "❌ Bạn không có quyền!")
+    parts = message.text.split()
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ Dùng: /themadmin [ID_nguoi_dung]")
+    id_them = parts[1]
+    if id_them not in DANH_SACH_ADMIN:
+        DANH_SACH_ADMIN.append(id_them)
+        luu_file_json(FILE_ADMIN, DANH_SACH_ADMIN)
+        bot.reply_to(message, f"✅ Đã thêm admin ID: {id_them}")
+    else:
+        bot.reply_to(message, "⚠️ Người này đã là admin!")
+
+@bot.message_handler(commands=["xoaadmin"])
+def xoa_admin(message):
+    if message.from_user.id != CHU_SO_HUU:
+        return bot.reply_to(message, "❌ Chỉ chủ sở hữu mới xóa được admin!")
+    parts = message.text.split()
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ Dùng: /xoaadmin [ID_nguoi_dung]")
+    id_xoa = parts[1]
+    if id_xoa in DANH_SACH_ADMIN and id_xoa != str(CHU_SO_HUU):
+        DANH_SACH_ADMIN.remove(id_xoa)
+        luu_file_json(FILE_ADMIN, DANH_SACH_ADMIN)
+        bot.reply_to(message, f"✅ Đã xóa admin ID: {id_xoa}")
+    else:
+        bot.reply_to(message, "❌ Không tồn tại hoặc không thể xóa chủ sở hữu!")
+
+@bot.message_handler(commands=["dsadmin"])
+def ds_admin(message):
+    if not la_admin(message.from_user.id):
+        return bot.reply_to(message, "❌ Không có quyền!")
+    text = "👑 DANH SÁCH ADMIN:\n" + "\n".join(
+        f"{idx}. {ad}" for idx, ad in enumerate(DANH_SACH_ADMIN, 1)
+    )
+    bot.reply_to(message, text)
+
+# ==================================================
+# 🚪 /START
+# ==================================================
+@bot.message_handler(commands=["start"])
+def chao_mung(message):
+    uid = str(message.from_user.id)
+    if uid not in DU_LIEU_NGUOI_DUNG:
+        DU_LIEU_NGUOI_DUNG[uid] = {
+            "ten": f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip(),
+            "username":     message.from_user.username,
+            "ngay_tham_gia": datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "coin": 0,
+            "gem":  0,
+        }
+        luu_file_json(FILE_NGUOI_DUNG, DU_LIEU_NGUOI_DUNG)
+        ghi_log_va_thong_bao(message, "| ✅ NGƯỜI DÙNG MỚI")
+    else:
+        ghi_log_va_thong_bao(message, "| Gọi lệnh /start")
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🌾 MỞ TRANG TRẠI NGAY", web_app=WebAppInfo(url=LINK_MINIAPP)))
+    keyboard.add(InlineKeyboardButton("📢 Kênh thông báo",   url="https://t.me/treefarm_news"))
+    keyboard.add(InlineKeyboardButton("🌐 Nhóm trò chuyện",  url="https://t.me/treefarm_chat"))
+
+    bot.send_photo(
+        message.chat.id,
+        LINK_ANH,
+        caption=(
+            "👋 Chào bạn! Chào mừng đến với Tree Farm 🌾\n\n"
+            "Trồng trọt, làm nhiệm vụ mỗi ngày và tích xu đổi thưởng.\n"
+            "Mời bạn bè, leo bảng xếp hạng và rút kim cương khi đủ điều kiện."
+        ),
+        reply_markup=keyboard,
+    )
+
+# ==================================================
+# 📢 GỬI THÔNG BÁO BROADCAST
+# ==================================================
+@bot.message_handler(commands=["gui"])
+def gui_thong_bao(message):
+    if not la_admin(message.from_user.id):
+        return
+    reply = message.reply_to_message
+    if not reply:
+        return bot.reply_to(message, "⚠️ Trả lời tin nhắn cần gửi kèm lệnh /gui")
+
+    thanh_cong = that_bai = 0
+    bot.reply_to(message, "⏳ Đang gửi thông báo...")
+    for uid in DU_LIEU_NGUOI_DUNG.keys():
+        try:
+            bot.copy_message(int(uid), message.chat.id, reply.message_id)
+            thanh_cong += 1
+        except Exception:
+            that_bai += 1
+        time.sleep(0.05)
+
+    bot.reply_to(message, f"✅ Hoàn tất!\nThành công: {thanh_cong}\nThất bại: {that_bai}")
+
+# ==================================================
+# 🛡️ BẮT TẤT CẢ TIN NHẮN ĐỂ GHI LOG & FORWARD
+# ==================================================
+@bot.message_handler(content_types=[
+    "text", "photo", "sticker", "animation",
+    "video", "document", "audio", "voice"
+])
+def xu_ly_tat_ca_tin_nhan(message):
+    if message.content_type == "text" and message.text and message.text.startswith("/"):
+        return
+    ghi_log_va_thong_bao(message)
+
+# ==================================================
+# 🔄 TỰ ĐỘNG KHỞI ĐỘNG LẠI KHI LỖI
+# ==================================================
+def chay_bot_khong_ngung():
+    while True:
+        try:
+            print("🤖 BOT ĐANG CHẠY...")
+            bot.polling(none_stop=True, interval=3, timeout=60, skip_pending=True)
+        except Exception as e:
+            print(f"⚠️ LỖI: {e} | Khởi động lại sau 5s...")
+            time.sleep(5)
+
+if __name__ == "__main__":
+    chay_bot_khong_ngung()
