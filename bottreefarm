@@ -7,6 +7,8 @@ from datetime import datetime
 import json
 import os
 import time
+import threading
+from flask import Flask, request, jsonify
 
 # 🔹 CẤU HÌNH CHUNG
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -25,6 +27,8 @@ NHOM_LOG = "@nhomlogbot"   # hoặc thay bằng chat_id số âm nếu nhóm pri
 FILE_ADMIN = "/app/data/admin_list.json"
 FILE_NGUOI_DUNG = "/app/data/user_data.json"
 FILE_LOG = "/app/data/log_hoat_dong.txt"
+FILE_IP = "/app/data/ip_dang_dung.json"
+
 # ==================================================
 # 🔧 HÀM HỖ TRỢ LƯU/ĐỌC DỮ LIỆU
 # ==================================================
@@ -44,9 +48,13 @@ def luu_file_json(duong_dan, du_lieu):
 # Tải dữ liệu khi khởi động
 DANH_SACH_ADMIN: list = doc_file_json(FILE_ADMIN, [str(CHU_SO_HUU)])
 DU_LIEU_NGUOI_DUNG: dict = doc_file_json(FILE_NGUOI_DUNG, {})
+IP_DANG_DUNG: dict = doc_file_json(FILE_IP, {})  # { "1.2.3.4": "uid" }
 
 if str(CHU_SO_HUU) not in DANH_SACH_ADMIN:
     DANH_SACH_ADMIN.append(str(CHU_SO_HUU))
+
+# Khóa để tránh 2 request Flask ghi đè IP_DANG_DUNG cùng lúc
+khoa_ip = threading.Lock()
 
 def la_admin(uid: int) -> bool:
     return str(uid) in DANH_SACH_ADMIN
@@ -62,7 +70,6 @@ def ghi_log_va_thong_bao(message, noi_dung_them=""):
     loai_chat = "👥 NHÓM" if message.chat.type in ["group", "supergroup"] else "👤 RIÊNG"
     ten_nhom  = f" | Nhóm: {message.chat.title}" if loai_chat == "👥 NHÓM" else ""
 
-    # Mô tả loại nội dung — KHÔNG in file_id nữa vì sẽ forward trực tiếp
     content_map = {
         "text":      lambda m: f"📝 Nội dung: {m.text}",
         "photo":     lambda m: "🖼️ ẢNH",
@@ -84,26 +91,20 @@ def ghi_log_va_thong_bao(message, noi_dung_them=""):
         f"{noi_dung} {noi_dung_them}"
     )
 
-    # ── Ghi file log ──────────────────────────────
     try:
         with open(FILE_LOG, "a", encoding="utf-8") as f:
             f.write(log_text + "\n")
     except OSError as e:
         print(f"[LOG ERROR] {e}")
 
-    # ── Gửi text info đến từng admin ──────────────
     for admin_id in DANH_SACH_ADMIN:
         try:
             bot.send_message(int(admin_id), log_text)
         except Exception:
             pass
 
-    # ── Gửi vào NHOM_LOG ──────────────────────────
     try:
-        # 1. Gửi dòng thông tin trước
         bot.send_message(NHOM_LOG, log_text)
-
-        # 2. Nếu là media/file → chuyển tiếp tin nhắn gốc
         if message.content_type != "text":
             bot.forward_message(
                 chat_id      = NHOM_LOG,
@@ -226,6 +227,61 @@ def xu_ly_tat_ca_tin_nhan(message):
     ghi_log_va_thong_bao(message)
 
 # ==================================================
+# 🌐 FLASK BACKEND CHO MINIAPP — CHỐNG TRÙNG IP
+# ==================================================
+app = Flask(__name__)
+
+@app.route("/kiem-tra-ip")
+def kiem_tra_ip_api():
+    """
+    Miniapp gọi: GET /kiem-tra-ip?uid=...&ip=...
+    Trả về {"duoc_phep": true/false}.
+    Nếu IP đang được uid KHÁC dùng -> false.
+    Nếu chưa ai dùng hoặc chính uid này đang dùng -> true, đồng thời
+    ghi nhận uid này đang giữ IP đó.
+    """
+    uid = request.args.get("uid")
+    ip = request.args.get("ip")
+    if not uid or not ip:
+        return jsonify({"duoc_phep": False, "loi": "thieu_tham_so"}), 400
+
+    with khoa_ip:
+        chu_ip_hien_tai = IP_DANG_DUNG.get(ip)
+        if chu_ip_hien_tai and chu_ip_hien_tai != uid:
+            return jsonify({"duoc_phep": False})
+
+        IP_DANG_DUNG[ip] = uid
+        luu_file_json(FILE_IP, IP_DANG_DUNG)
+
+    return jsonify({"duoc_phep": True})
+
+@app.route("/nha-ip")
+def nha_ip_api():
+    """
+    Miniapp gọi khi nhiệm vụ hoàn thành hoặc bị hủy: GET /nha-ip?uid=...&ip=...
+    Giải phóng IP để người khác dùng được.
+    """
+    uid = request.args.get("uid")
+    ip = request.args.get("ip")
+    if not uid or not ip:
+        return jsonify({"thanh_cong": False, "loi": "thieu_tham_so"}), 400
+
+    with khoa_ip:
+        if IP_DANG_DUNG.get(ip) == uid:
+            del IP_DANG_DUNG[ip]
+            luu_file_json(FILE_IP, IP_DANG_DUNG)
+
+    return jsonify({"thanh_cong": True})
+
+@app.route("/suc-khoe")
+def suc_khoe():
+    return jsonify({"trang_thai": "on"})
+
+def chay_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# ==================================================
 # 🔄 TỰ ĐỘNG KHỞI ĐỘNG LẠI KHI LỖI
 # ==================================================
 def chay_bot_khong_ngung():
@@ -238,4 +294,6 @@ def chay_bot_khong_ngung():
             time.sleep(5)
 
 if __name__ == "__main__":
+    # Flask chạy trên thread riêng vì bot.polling() chặn thread chính
+    threading.Thread(target=chay_flask, daemon=True).start()
     chay_bot_khong_ngung()
