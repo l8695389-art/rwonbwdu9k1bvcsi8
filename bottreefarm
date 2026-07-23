@@ -52,8 +52,6 @@ if str(CHU_SO_HUU) not in DANH_SACH_ADMIN:
 def la_admin(uid: int) -> bool:
     return str(uid) in DANH_SACH_ADMIN
 
-bot = telebot.TeleBot(TOKEN, parse_mode=None)
-
 # ==================================================
 # 📝 GHI LOG & THÔNG BÁO — FORWARD FILE VÀO NHÓM
 # ==================================================
